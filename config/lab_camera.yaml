@@ -1,0 +1,51 @@
+# Intrinsics of the camera that produced the query images for the data/lab map.
+#
+# These are the COLMAP camera of that reconstruction, verbatim:
+#
+#   1 PINHOLE 1882 1058 1633.16263298 1633.95959332 939.970139012599 524.9312154235055
+#
+# (data/lab/sparse/0/cameras.txt). They are correct for replaying the dataset's
+# own frames. When you point a *different* physical camera at this map, replace
+# them with that camera's measured calibration.
+#
+# Nothing here has to be transcribed by hand: the server also accepts a COLMAP
+# path in place of this file, so
+#
+#   camera_yaml:=/path/to/data/lab/sparse/0
+#
+# loads the same numbers straight from cameras.txt. The YAML exists so a
+# measured calibration has an obvious home, and so distortion can be declared
+# for a camera COLMAP modelled as pinhole.
+#
+# The server rescales fx/fy/cx/cy automatically if incoming images have a
+# different resolution than cam_width x cam_height, but it cannot know about a
+# crop, so prefer entering the calibration at the resolution you actually
+# publish.
+#
+# Note cam_cx = 939.97 against cam_width / 2 = 941.0, so this camera is very
+# nearly centred, unlike config/test_camera.yaml (colmap_E2), which is off by
+# 22.7 px. Enter the principal point as measured either way: it is what PnP uses
+# to interpret the query image.
+#
+# The *renderer* is a separate question. Stock 3DGS derives its cameras from the
+# focal lengths alone (FoVx/FoVy) and has no cx/cy, so a map trained that way has
+# absorbed the offset into the gaussians and is rendered with a centred principal
+# point. If your map came from a fork that genuinely models cx/cy, set
+# ~render_use_principal_point:=true on the server.
+
+cam_width: 1882
+cam_height: 1058
+
+cam_fx: 1633.162633
+cam_fy: 1633.959593
+cam_cx: 939.970139
+cam_cy: 524.931215
+
+# Distortion of the *published* image. Leave as "none" when you publish already
+# rectified images (e.g. from image_proc), otherwise the query gets undistorted
+# twice. COLMAP modelled this capture as PINHOLE, i.e. distortion-free.
+#   none        - no distortion, ignore distortion_coeffs
+#   plumb_bob   - OpenCV radial-tangential, coeffs [k1, k2, p1, p2, (k3)]
+#   equidistant - OpenCV fisheye, exactly 4 coeffs [k1, k2, k3, k4]
+distortion_model: none
+distortion_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]

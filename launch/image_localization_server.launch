@@ -1,0 +1,169 @@
+<launch>
+  <!-- The catkin package holding the scripts. -->
+  <arg name="package_name" default="image_localization_3dgs"/>
+
+  <!-- The node needs torch, the 3DGS rasterizer, hloc and MASt3R, which live in
+       a conda env rather than in the system python that runs roslaunch. The
+       launch-prefix runs the script under that interpreter, and the PYTHONPATH
+       override below gives it ROS' pure-python packages while keeping any other
+       env out of the way. cv_bridge and tf2_ros are compiled against the system
+       python3.8 so they will not import here; the node falls back to its own
+       image decoding and publishes /tf directly.
+
+       The -u in the launch-prefix below matters: without it python buffers
+       stdout when roslaunch captures it through a pipe, so startup progress
+       ("Localization engine ready", "Listening on ...") sits in the buffer and
+       a node that is already up looks hung. -->
+  <arg name="python_bin" default="$(env HOME)/miniconda3/envs/gs_loc/bin/python"/>
+  <arg name="ros_python_path" default="/opt/ros/noetic/lib/python3/dist-packages"/>
+
+  <!-- Trained 3DGS model directory: point_cloud/iteration_*/ plus the COLMAP
+       reconstruction it was trained from (sparse/0/) and/or cameras.json. -->
+  <arg name="model_path"/>
+  <!-- A calibration YAML, or a COLMAP model path to read cameras.txt from. -->
+  <arg name="camera_yaml"/>
+  <arg name="iteration" default="-1"/>
+
+  <!-- Only needed for reference_source=loam or a prepared NetVLAD database. -->
+  <arg name="database_path" default=""/>
+
+  <!-- auto:         COLMAP sparse model if there is one, else cameras.json.
+       colmap:       require a COLMAP model (cameras.txt/images.txt, or .bin).
+       cameras_json: the trained model's own cameras.json.
+       loam:         <database_path>/loam/0/poses.csv via the Gaussian_splatting fork. -->
+  <arg name="reference_source" default="auto"/>
+  <!-- Explicit sparse model directory, when it is not under model_path. -->
+  <arg name="colmap_path" default=""/>
+
+  <!-- auto:   prepared <database_path>/sfm h5, else raw images, else renders.
+       images: NetVLAD over the map's raw reference images (preferred: a query
+               is a photograph, so photograph-to-photograph retrieval has no
+               render-to-real domain gap).
+       render: NetVLAD over renders of every reference pose.
+       folder: only a prepared <database_path>/sfm/global-feats-netvlad.h5. -->
+  <arg name="retrieval_source" default="auto"/>
+  <!-- Defaults to <model_path>/images or the COLMAP dataset's images/. -->
+  <arg name="reference_images_dir" default=""/>
+
+  <arg name="image_topic" default="/camera/image_raw/compressed"/>
+  <arg name="compressed" default="true"/>
+
+  <!-- VIO priming. With use_vio:=true the device's own odometry supplies the
+       initial pose, so NetVLAD retrieval runs only on the first frame and
+       whenever the alignment is dropped. Leave false for a device without VIO:
+       the server then behaves exactly as it did before. -->
+  <arg name="use_vio" default="false"/>
+  <arg name="vio_topic" default="/vio/odometry"/>
+  <!-- odometry (nav_msgs/Odometry) | pose | pose_cov | transform -->
+  <arg name="vio_msg_type" default="odometry"/>
+  <arg name="vio_frame" default="odom"/>
+  <!-- Body-to-camera extrinsic as x y z qx qy qz qw. VIO reports a body frame;
+       the server localizes the camera. A constant error here is absorbed into
+       the map-to-odom transform, but it distorts the *relative* prediction in
+       proportion to how much the body rotates between fixes, so enter it. Empty
+       means identity, i.e. VIO already reports the camera optical frame. -->
+  <arg name="vio_body_to_camera" default=""/>
+
+  <node pkg="$(arg package_name)"
+        type="image_localization_ros1_server.py"
+        name="image_localization_server"
+        output="screen"
+        required="true"
+        launch-prefix="$(arg python_bin) -u">
+
+    <env name="PYTHONPATH" value="$(arg ros_python_path)"/>
+
+    <param name="model_path" value="$(arg model_path)"/>
+    <param name="iteration" value="$(arg iteration)"/>
+    <param name="camera_yaml" value="$(arg camera_yaml)"/>
+    <param name="database_path" value="$(arg database_path)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="compressed" value="$(arg compressed)"/>
+
+    <param name="reference_source" value="$(arg reference_source)"/>
+    <param name="colmap_path" value="$(arg colmap_path)"/>
+
+    <param name="pose_topic" value="/image_localization/camera_pose"/>
+    <param name="status_topic" value="/image_localization/status"/>
+    <param name="map_frame" value="map"/>
+    <param name="camera_frame" value="localized_camera_optical_frame"/>
+    <param name="publish_tf" value="true"/>
+
+    <!-- The rasterizer returns expected *inverse* depth (see forward.cu), so it
+         is reciprocated before backprojection. Running selftest_localization.py
+         with depth_mode=both confirms this empirically: on data/colmap_E2
+         inverse beats linear by an order of magnitude. Only change this
+         if you swap in a rasterizer that returns metric z. -->
+    <param name="depth_mode" value="inverse"/>
+
+    <!-- Stock 3DGS builds its cameras from focal lengths alone (FoVx/FoVy), so a
+         map trained that way has absorbed any principal-point offset into the
+         gaussians and must be rendered with a centred principal point. The query
+         image keeps its true cx/cy for PnP either way. Set this true only for a
+         map trained by a fork that genuinely models the principal point. -->
+    <param name="render_use_principal_point" value="false"/>
+
+    <!-- Retrieval. The database is built once and cached in retrieval_cache_dir
+         (default <model_path>/netvlad_cache); the cache is keyed by its source,
+         so switching retrieval_source rebuilds rather than reusing stale
+         descriptors. Building from raw images takes seconds, from renders
+         minutes. -->
+    <param name="retrieval_source" value="$(arg retrieval_source)"/>
+    <param name="reference_images_dir" value="$(arg reference_images_dir)"/>
+    <param name="num_retrieval" value="3"/>
+    <param name="max_candidates_to_test" value="1"/>
+    <param name="db_render_scale" value="0.5"/>
+    <param name="rebuild_retrieval_db" value="false"/>
+    <!-- <param name="retrieval_cache_dir" value="/path/to/cache"/> -->
+
+    <!-- Each iteration re-renders at the current estimate and re-solves. Going
+         from 1 to 3 took median error from 0.058 m to 0.015 m on colmap_E2 and
+         roughly triples per-frame time. -->
+    <param name="optimization_iterations" value="3"/>
+
+    <param name="min_correspondences" value="20"/>
+    <param name="min_inliers" value="12"/>
+    <param name="pnp_iterations" value="2000"/>
+    <param name="pnp_reprojection_error_px" value="3.0"/>
+    <param name="pnp_confidence" value="0.9999"/>
+    <param name="refine_pnp_lm" value="true"/>
+    <param name="match_subsample" value="8"/>
+
+    <!-- false: global retrieval on every frame (independent relocalization).
+         true:  try the previous pose first, fall back to retrieval.
+         Ignored on frames where a VIO prior is available; that comes first. -->
+    <param name="reuse_last_pose" value="false"/>
+
+    <!-- VIO priming. The first successful fix pins T_map_odom; every later fix
+         re-derives it from the newest pose pair, so VIO drift is corrected
+         rather than accumulated. Published on /image_localization/map_to_odom
+         so a consumer can correct the full-rate VIO stream between fixes.
+
+         With a good prior, optimization_iterations can usually drop from 3 to 1
+         at no accuracy cost — that, not the ~60 ms of retrieval, is where the
+         time is saved. -->
+    <param name="use_vio" value="$(arg use_vio)"/>
+    <param name="vio_topic" value="$(arg vio_topic)"/>
+    <param name="vio_msg_type" value="$(arg vio_msg_type)"/>
+    <param name="vio_frame" value="$(arg vio_frame)"/>
+    <param name="vio_body_to_camera" value="$(arg vio_body_to_camera)"/>
+    <!-- A VIO pose must be within this many seconds of the image stamp; both
+         streams therefore have to share a clock. Otherwise the frame falls back
+         to retrieval. -->
+    <param name="vio_max_time_diff" value="0.05"/>
+    <!-- Consecutive failed VIO-primed attempts before the alignment is dropped
+         and the next frame re-bootstraps through retrieval. -->
+    <param name="vio_reset_after_failures" value="3"/>
+    <param name="vio_fallback_to_retrieval" value="true"/>
+    <!-- Off by default: map -> odom is the standard way to express this, but it
+         claims a parent frame an existing VIO tf tree may already own. -->
+    <param name="publish_map_to_odom_tf" value="false"/>
+
+    <!-- hloc and MASt3R still need file paths, so runtime images go to tmpfs. -->
+    <param name="runtime_dir" value="/dev/shm/3dgs_localization"/>
+    <param name="jpeg_quality" value="95"/>
+
+    <param name="save_debug" value="false"/>
+    <param name="debug_dir" value="/tmp/3dgs_localization_debug"/>
+  </node>
+</launch>

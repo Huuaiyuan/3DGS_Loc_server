@@ -1,0 +1,62 @@
+<launch>
+  <!--
+    End-to-end test of VIO priming on the data/lab map, with no drone: the test
+    publisher emits a *simulated* VIO stream derived from the ground-truth
+    poses, and the server consumes it.
+
+      roslaunch YOUR_CATKIN_PACKAGE test_localization_vio.launch \
+        package_name:=YOUR_CATKIN_PACKAGE
+
+    What this checks:
+
+      * the first frame bootstraps through NetVLAD retrieval, because nothing
+        yet relates the VIO frame to the map frame;
+      * every later frame is primed by VIO instead (watch `init=vio` in the log
+        and the `initial pose came from:` summary), so no retrieval runs;
+      * the map-to-odom transform tracks the simulated drift, which is what
+        keeps the prior good as VIO wanders. `prediction_error` in the log is
+        the distance between the prior and the solved pose — it should settle
+        at roughly one frame's worth of drift, not grow.
+
+    The simulated VIO drifts 2 cm and 0.3 deg per frame and runs at 20 Hz
+    against 2 Hz images, so the server interpolates its buffer rather than
+    picking a nearest sample.
+
+    A consecutive run of frames is used here, unlike test_localization_lab.launch
+    which spreads its queries over the whole trajectory: VIO priming only means
+    anything along a continuous trajectory. Those frames are held out of the
+    retrieval database so the one bootstrap fix is honest.
+
+    optimization_iterations is 1 rather than 3: a VIO prior lands within a few
+    centimetres, and from there one render/match/PnP pass is as accurate as
+    three (measured: 3.3 mm vs 4.5 mm median) at roughly a third of the time.
+    That is where VIO priming actually saves time — retrieval itself is only
+    ~60 ms of a ~1500 ms frame.
+  -->
+  <arg name="package_name" default="image_localization_3dgs"/>
+  <arg name="repo_dir" default="$(env HOME)/Documents/GS-CPE/3DGS_Loc_server"/>
+
+  <!-- 16 consecutive frames: frame200 .. frame215. -->
+  <arg name="flight_frames"
+       default="frame200.png,frame201.png,frame202.png,frame203.png,frame204.png,frame205.png,frame206.png,frame207.png,frame208.png,frame209.png,frame210.png,frame211.png,frame212.png,frame213.png,frame214.png,frame215.png"/>
+
+  <include file="$(arg repo_dir)/launch/test_localization.launch">
+    <arg name="package_name" value="$(arg package_name)"/>
+    <arg name="repo_dir" value="$(arg repo_dir)"/>
+
+    <arg name="model_path" value="$(arg repo_dir)/data/lab"/>
+    <arg name="camera_yaml" value="$(arg repo_dir)/config/lab_camera.yaml"/>
+    <arg name="image_dir" value="$(arg repo_dir)/data/lab/images"/>
+    <arg name="image_names" value="$(arg flight_frames)"/>
+    <arg name="retrieval_exclude" value="$(arg flight_frames)"/>
+
+    <arg name="reference_source" value="colmap"/>
+    <arg name="retrieval_source" value="images"/>
+    <arg name="retrieval_cache_dir" value="$(arg repo_dir)/data/lab/netvlad_cache_flight"/>
+    <arg name="ground_truth" value="$(arg repo_dir)/data/lab/sparse/0"/>
+
+    <arg name="use_vio" value="true"/>
+    <arg name="publish_vio" value="true"/>
+    <arg name="optimization_iterations" value="1"/>
+  </include>
+</launch>

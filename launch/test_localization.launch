@@ -1,0 +1,111 @@
+<launch>
+  <!--
+    End-to-end test: start the localization server on a map and feed it offline
+    images, scoring each result against the map's own reference poses.
+
+    Defaults target the bundled colmap_E2 map:
+
+      roslaunch YOUR_CATKIN_PACKAGE test_localization.launch package_name:=YOUR_CATKIN_PACKAGE
+
+    For the data/lab map (COLMAP poses + raw reference images) use
+    test_localization_lab.launch, which is this file with lab arguments.
+
+    The first run builds the NetVLAD retrieval database: seconds when it comes
+    from raw images, minutes when every reference view has to be rendered
+    (colmap_E2, whose source images are not on this machine). Later runs reuse
+    the cache in <model_path>/netvlad_cache.
+  -->
+  <arg name="package_name" default="image_localization_3dgs"/>
+  <arg name="repo_dir" default="$(env HOME)/Documents/GS-CPE/3DGS_Loc_server"/>
+
+  <!-- See image_localization_server.launch for why the nodes run under a
+       separate interpreter. -->
+  <arg name="python_bin" default="$(env HOME)/miniconda3/envs/gs_loc/bin/python"/>
+  <arg name="ros_python_path" default="/opt/ros/noetic/lib/python3/dist-packages"/>
+
+  <arg name="model_path" default="$(arg repo_dir)/data/colmap_E2"/>
+  <arg name="camera_yaml" default="$(arg repo_dir)/config/test_camera.yaml"/>
+  <arg name="image_dir" default="$(arg repo_dir)/data/colmap_E2/test_image"/>
+
+  <!-- auto = COLMAP sparse model when the map has one, else cameras.json. -->
+  <arg name="reference_source" default="auto"/>
+  <arg name="retrieval_source" default="auto"/>
+
+  <!-- Frames to keep out of the retrieval database, and the frames to replay as
+       queries. Set both to the same list when the queries are themselves
+       reference images: otherwise retrieval returns the query and the solve
+       starts from the answer. Empty image_names publishes the whole
+       image_dir. -->
+  <arg name="retrieval_exclude" default=""/>
+  <arg name="image_names" default=""/>
+  <!-- Each test holds out a different set of frames, so each needs its own
+       cache; sharing one would make every run rebuild what the last run
+       replaced. Empty = the server default, <model_path>/netvlad_cache. -->
+  <arg name="retrieval_cache_dir" default=""/>
+
+  <!-- VIO priming. publish_vio makes the test publisher emit a *simulated* VIO
+       stream derived from the ground-truth poses; use_vio makes the server
+       consume it. Both off by default. -->
+  <arg name="use_vio" default="false"/>
+  <arg name="publish_vio" default="false"/>
+  <arg name="vio_topic" default="/vio/odometry"/>
+  <arg name="optimization_iterations" default="3"/>
+  <!-- Scores any query whose filename matches a reference image. A COLMAP model
+       directory (or a root holding one) and a cameras.json are both accepted. -->
+  <arg name="ground_truth" default="$(arg model_path)/cameras.json"/>
+
+  <arg name="image_topic" default="/camera/image_raw/compressed"/>
+  <arg name="compressed" default="true"/>
+
+  <node pkg="$(arg package_name)"
+        type="image_localization_ros1_server.py"
+        name="image_localization_server"
+        output="screen"
+        launch-prefix="$(arg python_bin) -u">
+    <env name="PYTHONPATH" value="$(arg ros_python_path)"/>
+    <param name="model_path" value="$(arg model_path)"/>
+    <param name="camera_yaml" value="$(arg camera_yaml)"/>
+    <param name="iteration" value="-1"/>
+    <param name="reference_source" value="$(arg reference_source)"/>
+    <param name="retrieval_source" value="$(arg retrieval_source)"/>
+    <param name="retrieval_exclude" value="$(arg retrieval_exclude)"/>
+    <param name="retrieval_cache_dir" value="$(arg retrieval_cache_dir)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="compressed" value="$(arg compressed)"/>
+    <param name="depth_mode" value="inverse"/>
+    <param name="optimization_iterations" value="$(arg optimization_iterations)"/>
+    <param name="num_retrieval" value="3"/>
+    <param name="max_candidates_to_test" value="1"/>
+    <param name="publish_tf" value="true"/>
+    <param name="use_vio" value="$(arg use_vio)"/>
+    <param name="vio_topic" value="$(arg vio_topic)"/>
+    <param name="vio_msg_type" value="odometry"/>
+    <param name="save_debug" value="true"/>
+    <param name="debug_dir" value="/tmp/3dgs_localization_debug"/>
+  </node>
+
+  <node pkg="$(arg package_name)"
+        type="test_image_publisher.py"
+        name="test_image_publisher"
+        output="screen"
+        required="true"
+        launch-prefix="$(arg python_bin) -u">
+    <env name="PYTHONPATH" value="$(arg ros_python_path)"/>
+    <param name="image_dir" value="$(arg image_dir)"/>
+    <param name="image_names" value="$(arg image_names)"/>
+    <param name="camera_yaml" value="$(arg camera_yaml)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="compressed" value="$(arg compressed)"/>
+    <!-- Model loading plus a first-time database build can take minutes. -->
+    <param name="startup_delay" value="600.0"/>
+    <param name="wait_for_result" value="true"/>
+    <param name="result_timeout" value="180.0"/>
+    <param name="repeat" value="1"/>
+    <param name="ground_truth" value="$(arg ground_truth)"/>
+    <param name="publish_vio" value="$(arg publish_vio)"/>
+    <param name="vio_topic" value="$(arg vio_topic)"/>
+    <param name="vio_drift_m_per_frame" value="0.02"/>
+    <param name="vio_drift_deg_per_frame" value="0.3"/>
+    <param name="vio_rate" value="20.0"/>
+  </node>
+</launch>

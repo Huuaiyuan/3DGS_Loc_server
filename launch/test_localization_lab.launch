@@ -1,0 +1,51 @@
+<launch>
+  <!--
+    End-to-end test on the data/lab map.
+
+      roslaunch YOUR_CATKIN_PACKAGE test_localization_lab.launch \
+        package_name:=YOUR_CATKIN_PACKAGE
+
+    This is test_localization.launch with lab arguments. What differs from the
+    colmap_E2 defaults:
+
+      * reference poses come from the COLMAP reconstruction the map was trained
+        from, data/lab/sparse/0 (cameras.txt / images.txt, text preferred over
+        the .bin twins). No cameras.json is involved, and the same model is the
+        ground truth the results are scored against.
+      * the retrieval database is built from the raw reference images in
+        data/lab/images rather than from renders: seconds instead of minutes,
+        and it compares photographs against photographs.
+
+    Six frames spread along the trajectory are replayed as queries and are held
+    out of the retrieval database, so each solve starts from a *different*
+    reference view. Without the hold-out, retrieval returns the query image
+    itself and the test would be scoring the answer against itself.
+
+    Changing holdout_frames changes the database contents, so the NetVLAD cache
+    rebuilds on the next run (its manifest is keyed by the file set).
+  -->
+  <arg name="package_name" default="image_localization_3dgs"/>
+  <arg name="repo_dir" default="$(env HOME)/Documents/GS-CPE/3DGS_Loc_server"/>
+
+  <arg name="holdout_frames"
+       default="frame5.png,frame95.png,frame154.png,frame214.png,frame273.png,frame333.png"/>
+
+  <include file="$(arg repo_dir)/launch/test_localization.launch">
+    <arg name="package_name" value="$(arg package_name)"/>
+    <arg name="repo_dir" value="$(arg repo_dir)"/>
+
+    <arg name="model_path" value="$(arg repo_dir)/data/lab"/>
+    <arg name="camera_yaml" value="$(arg repo_dir)/config/lab_camera.yaml"/>
+
+    <!-- The queries are reference frames, so they come from the map's own
+         image folder and are held out of the database. -->
+    <arg name="image_dir" value="$(arg repo_dir)/data/lab/images"/>
+    <arg name="image_names" value="$(arg holdout_frames)"/>
+    <arg name="retrieval_exclude" value="$(arg holdout_frames)"/>
+
+    <arg name="reference_source" value="colmap"/>
+    <arg name="retrieval_source" value="images"/>
+    <arg name="retrieval_cache_dir" value="$(arg repo_dir)/data/lab/netvlad_cache_holdout6"/>
+    <arg name="ground_truth" value="$(arg repo_dir)/data/lab/sparse/0"/>
+  </include>
+</launch>

@@ -1,0 +1,39 @@
+# Intrinsics of the camera that produced the query images.
+#
+# Put YOUR measured calibration here. These values are only a starting point:
+# they come from data/colmap_E2/test_image/test_camera.txt, the COLMAP camera
+# for the bundled test frame:
+#
+#   1 PINHOLE 1224 1024 912.194000 911.791000 634.692000 513.263000
+#
+# The server rescales fx/fy/cx/cy automatically if incoming images have a
+# different resolution than cam_width x cam_height, but it cannot know about a
+# crop, so prefer entering the calibration at the resolution you actually
+# publish.
+#
+# Note cam_cx = 634.692 against cam_width / 2 = 612.0. That 22.7 px offset is
+# real: enter it as measured, do not "round" the principal point to the image
+# centre. It is what PnP uses to interpret the query image.
+#
+# The *renderer* is a separate question. Stock 3DGS derives its cameras from the
+# focal lengths alone (FoVx/FoVy) and has no cx/cy, so a map trained that way has
+# absorbed the offset into the gaussians and is rendered with a centred principal
+# point. If your map came from a fork that genuinely models cx/cy, set
+# ~render_use_principal_point:=true on the server.
+
+cam_width: 1224
+cam_height: 1024
+
+cam_fx: 912.194000
+cam_fy: 911.791000
+cam_cx: 634.692000
+cam_cy: 513.263000
+
+# Distortion of the *published* image. Leave as "none" when you publish already
+# rectified images (e.g. from image_proc), otherwise the query gets undistorted
+# twice.
+#   none        - no distortion, ignore distortion_coeffs
+#   plumb_bob   - OpenCV radial-tangential, coeffs [k1, k2, p1, p2, (k3)]
+#   equidistant - OpenCV fisheye, exactly 4 coeffs [k1, k2, k3, k4]
+distortion_model: none
+distortion_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
