@@ -28,7 +28,7 @@ and no marker is needed: every frame is relocalized independently.
    geometry_msgs/PoseStamped  +  JSON status  +  /tf
 ```
 
-Measured on an RTX 3070 Ti Laptop with the bundled `data/colmap_E2` map at
+Measured on an RTX 3070 Ti Laptop with the bundled `data/` map at
 1224x1024: **~2.0 s per frame** (match 1.28 s, PnP 0.44 s, retrieval 0.20 s,
 render 0.10 s), 683/3225 inliers, 1.82 px reprojection RMSE.
 
@@ -177,6 +177,7 @@ launch files already override `PYTHONPATH` per node, so `roslaunch` is unaffecte
 ## 3. Data you need
 
 ### 3.1 The map (`model_path`)
+Create a `data` folder under the main folder.
 
 A trained 3DGS model directory. The complete layout, as in `data/lab/`:
 
@@ -662,3 +663,18 @@ point. See `render_use_principal_point` in §8.
 | `launch/test_localization_lab.launch` | The same, with data/lab arguments |
 | `config/test_camera.yaml` | Query camera intrinsics, colmap_E2 |
 | `config/lab_camera.yaml` | Query camera intrinsics, data/lab |
+
+
+## Citation
+  
+If you find this work or code useful in your research, please consider citing:
+
+```bibtex
+@inproceedings{weng2026gscpe,
+  title     = {GS-CPE: Unified 6-Degree-of-Freedom Camera Pose Estimation via 3D Gaussian Splatting},
+  author    = {Weng, Huaiyuan and Chul Min Yeum},
+  booktitle = {XXXXXXXX},
+  year      = {2026}
+}
+```
+The work is accepted by IEEE  International Conference on Intelligent Robots and Systems (```IROS 2026```).
